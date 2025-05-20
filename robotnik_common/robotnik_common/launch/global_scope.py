@@ -47,6 +47,39 @@ class GlobalScope:
             cls._instance._declare_params = {}
         return cls._instance
 
+    def _parse_var_string(self, default: str, declare_params: dict):
+
+        """
+        Convert a string with multiple $(var ...) in a list of 
+        LaunchConfiguration y TextSubstitution.
+        """
+        parts = []
+        last_end = 0
+
+        # Find all $(var myvar) in the string
+        for match in re.finditer(r"\$\((?:var )(\w+)\)", default):
+            var_name = match.group(1)
+
+            if var_name not in declare_params:
+                raise RuntimeError(
+                    f"{RED}[GlobalScope ERROR] Variable '{var_name}' is not declared.{RESET}"
+                )
+
+            # Add the text before matching as TextSubstitution
+            if match.start() > last_end:
+                text = default[last_end:match.start()]
+                parts.append(TextSubstitution(text=text))
+
+            # Add LaunchConfiguration for this variable
+            parts.append(declare_params[var_name])
+            last_end = match.end()
+
+        # Add remaining text
+        if last_end < len(default):
+            parts.append(TextSubstitution(text=default[last_end:]))
+
+        return parts if len(parts) > 1 else parts[0]
+
     def globalScope(self, name, env=None, default=None):
         
         if env==None and default==None:
@@ -75,24 +108,27 @@ class GlobalScope:
 
             if default is not None:
 
-                # Manage $(var variable) format
-                pattern = r"\$\((?:var )(\w+)\)(.*)"
-                match = re.match(pattern, default)
+                if isinstance(default, str) and '$(var ' in default:
+                    default = self._parse_var_string(default, self._declare_params)
 
-                if match:
-                    var_name = match.group(1)
-                    suffix = match.group(2)
+                # # Manage $(var variable) format
+                # pattern = r"\$\((?:var )(\w+)\)(.*)"
+                # match = re.match(pattern, default)
 
-                    if var_name not in self._declare_params:
-                        raise RuntimeError(
-                            f"{RED}[GlobalScope ERROR] Variable '{var_name}' used in '{name}' "
-                            f"is not declared.{RESET}"
-                        )
+                # if match:
+                #     var_name = match.group(1)
+                #     suffix = match.group(2)
 
-                    default = [
-                        self._declare_params[var_name],
-                        TextSubstitution(text=suffix)
-                    ]
+                #     if var_name not in self._declare_params:
+                #         raise RuntimeError(
+                #             f"{RED}[GlobalScope ERROR] Variable '{var_name}' used in '{name}' "
+                #             f"is not declared.{RESET}"
+                #         )
+
+                #     default = [
+                #         self._declare_params[var_name],
+                #         TextSubstitution(text=suffix)
+                #     ]
             
 
             if env is not None:
