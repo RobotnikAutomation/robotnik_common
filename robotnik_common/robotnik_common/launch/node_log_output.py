@@ -25,6 +25,90 @@ def RNode(use_custom_logger : bool = True, *args, **kwargs) -> list[Node, Option
     node = Node(*args, **kwargs)
     return [node, RobotnikCustomLogger(node)]
 
+class Ros2Log:
+    """
+    Parses and represents a ROS 2 log line.
+    
+    Extracts structured information from ROS 2 log output including log level,
+    timestamp, node name, and the actual message content.
+    
+    Args:
+        original_string (str): The raw log line to parse.
+    
+    Attributes:
+        original_string (str): The original unparsed log line.
+        log_level (str): Extracted log level (DEBUG, INFO, WARN, ERROR, FATAL, TRACE).
+        timestamp (str): Extracted ROS timestamp as string.
+        node_name (str): Extracted node name from the log line.
+        message (str): The actual log message after removing metadata.
+        LOG_LEVEL_RE (re.Pattern): Regex pattern for matching log levels.
+        TIMESTAMP_RE (re.Pattern): Regex pattern for matching timestamps.
+        NODE_NAME_RE (re.Pattern): Regex pattern for matching node names.
+    
+    Methods:
+        _parse_log(original_string): Parses the log line into components.
+        _get_and_remove_log_level(line): Extracts and removes log level.
+        _get_and_remove_node_name(line): Extracts and removes node name.
+        _get_and_remove_timestamp(line): Extracts and removes timestamp.
+        _remove_match_from_line(line, match): Helper to remove regex match from line.
+    """
+
+    LOG_LEVEL_RE = re.compile(r'\[(DEBUG|INFO|WARN|ERROR|FATAL|TRACE)\]', re.IGNORECASE)
+    TIMESTAMP_RE = re.compile(r'\[\d+\.\d+\]')  # e.g. [1767962265.161910501]
+    NODE_NAME_RE = re.compile(r'\[([A-Za-z0-9_.\-\/]+)\]:')
+
+    def __init__(self, original_string: str):
+        self.original_string = original_string
+        self._parse_log(original_string)
+    
+    def _parse_log(self, original_string: str):
+        # Extract log level
+        self.log_level, line_stripped = self._get_and_remove_log_level(original_string)
+
+        # Extract timestamp
+        self.timestamp, line_stripped = self._get_and_remove_timestamp(line_stripped)
+
+        # Extract node name
+        self.node_name, line_stripped = self._get_and_remove_node_name(line_stripped)
+
+        # Remaining line_stripped is the message (strip leading/trailing spaces)
+        self.message = line_stripped.strip()
+
+    def _get_and_remove_log_level(self, line: str) -> tuple[str, str]:
+        log_level_match = self.LOG_LEVEL_RE.search(line)
+        log_level = None
+        if log_level_match:
+            log_level = log_level_match.group(1).upper()
+            # Remove it from line
+            line = self._remove_match_from_line(line, log_level_match)
+        return log_level, line
+
+    def _get_and_remove_node_name(self, line: str) -> tuple[str, str]:
+        node_name_match = self.NODE_NAME_RE.search(line)
+        node_name = None
+        if node_name_match:
+            node_name = node_name_match.group(1)
+            # Remove it from line
+            line = self._remove_match_from_line(line, node_name_match)
+        return node_name, line
+
+    def _get_and_remove_timestamp(self, line: str) -> tuple[str, str]:
+        timestamp_match = self.TIMESTAMP_RE.search(line)
+        timestamp = None
+        if timestamp_match:
+            timestamp_raw = timestamp_match.group(0).strip('[]')
+            # Convert ROS time float string to datetime or just keep as is
+            # For now, keep as string
+            timestamp = timestamp_raw
+            # Remove it from line
+            line = self._remove_match_from_line(line, timestamp_match)
+        return timestamp, line
+
+    def _remove_match_from_line(self, line: str, match: re.Match) -> str:
+        if match:
+            return line[:match.start()] + line[match.end():].strip()
+        return line
+
 class RobotnikCustomLogger(RegisterEventHandler):
     """
     Custom logger event handler for enhanced ROS 2 node log output formatting.
@@ -43,9 +127,6 @@ class RobotnikCustomLogger(RegisterEventHandler):
         NODE_WIDTH (int): Fixed width for the highlighted node name block (default: 20).
         PID_WIDTH (int): Fixed width for the PID block (default: 10).
         LOGTYPE_WIDTH (int): Fixed width for the log level (default: 5).
-        LOG_LEVEL_RE (re.Pattern): Regex to match log levels [DEBUG|INFO|WARN|ERROR|FATAL|TRACE].
-        TIMESTAMP_RE (re.Pattern): Regex to match ROS timestamps [seconds.nanoseconds].
-        NODE_NAME_RE (re.Pattern): Regex to match node names in format [node_name]:.
         ANSI_ESCAPE (re.Pattern): Regex to detect and strip ANSI escape codes.
     
     Methods:
@@ -53,10 +134,6 @@ class RobotnikCustomLogger(RegisterEventHandler):
         _on_stderr(event): Handles stderr events (currently redirects to _on_stdout).
         _parse_ros_log_line(line): Parses a single ROS log line into structured components.
         _parse_ros_log_lines(lines): Parses multiple log lines.
-        _get_and_remove_log_level(line): Extracts and removes log level from line.
-        _get_and_remove_node_name(line): Extracts and removes node name from line.
-        _get_and_remove_timestamp(line): Extracts and removes timestamp from line.
-        _remove_match_from_line(line, match): Removes a regex match from line.
         _get_log_level_formatted(level): Returns formatted log level string.
         _get_timestamp_formatted(timestamp): Converts ROS timestamp to readable format.
         _get_name_and_pid_formatted(name, pid, color): Returns color-highlighted name/PID block.
@@ -95,9 +172,6 @@ class RobotnikCustomLogger(RegisterEventHandler):
     PID_WIDTH = 10    # ancho fijo para PID si no se extrae nombre del log
     LOGTYPE_WIDTH = 5  # ancho fijo para tipo de log
 
-    LOG_LEVEL_RE = re.compile(r'\[(DEBUG|INFO|WARN|ERROR|FATAL|TRACE)\]', re.IGNORECASE)
-    TIMESTAMP_RE = re.compile(r'\[\d+\.\d+\]')  # e.g. [1767962265.161910501]
-    NODE_NAME_RE = re.compile(r'\[([A-Za-z0-9_.\-\/]+)\]:')
     ANSI_ESCAPE = re.compile(r'(\x1B\[[0-?]*[ -/]*[@-~])')
 
     def __init__(self, node: Node):
@@ -116,41 +190,6 @@ class RobotnikCustomLogger(RegisterEventHandler):
             parsed = self._parse_ros_log_line(line)
             parsed_lines.append(parsed)
         return parsed_lines
-    
-    def _get_and_remove_log_level(self, line: str) -> tuple[str, str]:
-        log_level_match = self.LOG_LEVEL_RE.search(line)
-        log_level = None
-        if log_level_match:
-            log_level = log_level_match.group(1).upper()
-            # Remove it from line
-            line = self._remove_match_from_line(line, log_level_match)
-        return log_level, line
-
-    def _get_and_remove_node_name(self, line: str) -> tuple[str, str]:
-        node_name_match = self.NODE_NAME_RE.search(line)
-        node_name = None
-        if node_name_match:
-            node_name = node_name_match.group(1)
-            # Remove it from line
-            line = self._remove_match_from_line(line, node_name_match)
-        return node_name, line
-
-    def _get_and_remove_timestamp(self, line: str) -> tuple[str, str]:
-        timestamp_match = self.TIMESTAMP_RE.search(line)
-        timestamp = None
-        if timestamp_match:
-            timestamp_raw = timestamp_match.group(0).strip('[]')
-            # Convert ROS time float string to datetime or just keep as is
-            # For now, keep as string
-            timestamp = timestamp_raw
-            # Remove it from line
-            line = self._remove_match_from_line(line, timestamp_match)
-        return timestamp, line
-
-    def _remove_match_from_line(self, line: str, match: re.Match) -> str:
-        if match:
-            return line[:match.start()] + line[match.end():].strip()
-        return line
 
     def _parse_ros_log_line(self, line: str) -> dict:
         show_original = False
@@ -161,28 +200,12 @@ class RobotnikCustomLogger(RegisterEventHandler):
         # Strip spaces from clean text
         line_stripped = line_clean.strip()
 
-        # Extract log level
-        log_level, line_stripped = self._get_and_remove_log_level(line_stripped)
-
-        # Extract timestamp
-        timestamp, line_stripped = self._get_and_remove_timestamp(line_stripped)
-
-        # Extract node name
-        node_name, line_stripped = self._get_and_remove_node_name(line_stripped)
-
-        show_original = node_name is None and log_level is None and timestamp is None
-
-        # Remaining line_stripped is the message (strip leading/trailing spaces)
-        message = line_stripped.strip()
-
+        log = Ros2Log(original_string = line_stripped)
+        
         parsed_line_info = {}
-        parsed_line_info["log_level"] = log_level
-        parsed_line_info["timestamp"] = timestamp
-        parsed_line_info["node_name"] = node_name
-        parsed_line_info["message"] = message
+        parsed_line_info["log"] = log
         parsed_line_info["ansi_codes"] = ansi_codes
         parsed_line_info["show_original"] = show_original
-        parsed_line_info["original_line"] = line
 
         return parsed_line_info
     
@@ -234,12 +257,13 @@ class RobotnikCustomLogger(RegisterEventHandler):
             color = self._get_color_for_pid(randint(0, len(self.BG_COLORS)-1))
         else:
             color = self._get_color_for_pid(pid)
-
-        name_and_pid_formatted = self._get_name_and_pid_formatted(parsed['node_name'], pid, color)
         
-        level_formatted = self._get_log_level_formatted(parsed['log_level'])
-        timestamp_formatted = self._get_timestamp_formatted(parsed['timestamp'])
-        msg = parsed['message']
+        log : Ros2Log = parsed["log"]
+
+        name_and_pid_formatted = self._get_name_and_pid_formatted(log.node_name, pid, color)
+        level_formatted = self._get_log_level_formatted(log.log_level)
+        timestamp_formatted = self._get_timestamp_formatted(log.timestamp)
+        msg = log.message
         ansi_codes = parsed['ansi_codes']
         if ansi_codes:
             # Reconstruct ANSI codes around message
