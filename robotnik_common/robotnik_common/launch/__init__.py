@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from .rewritten_yaml import RewrittenYaml
+from .config_file import ConfigFile
 from .global_scope import GlobalScope
 from .add_launch_args import add_launch_args
 from .add_launch_args import ExtendedArgument
